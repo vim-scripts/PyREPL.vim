@@ -1,0 +1,9 @@
+This is a mirror of http://www.vim.org/scripts/script.php?script_id=3484
+
+Example use:
+You can watch videos of the plugin in action at http://www.youtube.com/user/nadgobp#p/u.
+
+Usage:
+Inside any buffer use \r to toggle the REPL on or off. Toggling it on will create a new empty buffer every single time.
+
+Git repository: https://github.com/Bogdanp/pyrepl.vim
