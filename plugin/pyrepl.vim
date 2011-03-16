@@ -1,6 +1,6 @@
 " =======================================================================
 " File:        pyrepl.vim
-" Version:     0.1.2
+" Version:     0.1.3
 " Description: Vim plugin that provides a Python REPL inside a buffer.
 " Maintainer:  Bogdan Popa <popa.bogdanp@gmail.com>
 " License:     Copyright (C) 2011 Bogdan Popa
@@ -34,17 +34,16 @@
 if exists("g:pyrepl_version") || &cp
     finish
 endif
-" }}}
 
 " Version number
-let g:pyrepl_version = "0.1.2"
-
+let g:pyrepl_version = "0.1.3"
+" }}}
 " Check for +python. {{{
 if !has("python")
     echo("Error: PyREPL requires vim compiled with +python.")
+    finish
 endif
 " }}}
-
 " Main code in Python. {{{
 python <<EOF
 import cStringIO
@@ -67,13 +66,22 @@ class PyREPL(object):
         sys.stdout = self.old_stdout
 
     def update_path(self):
-        if not os.getcwd() in sys.path:
+        if os.getcwd() not in sys.path:
             sys.path.append(os.getcwd())
+
+    def reload_module(self):
+        "Asks for the name of a module and tries to reload it."
+        self.clear_lines()
+        self.insert_prompt()
+        vim.command("normal! i {0} = reload({0})".format(
+            vim.eval("input('Module to reload: ')")
+        ))
+        self.read_line()
 
     def eval(self, string, mode="single"):
         """Compiles then evals a given string of code and redirects the
         output to the current buffer."""
-        vim.command("normal jdG$")
+        self.clear_lines()
         try:
             eval(compile(string, "<string>", mode), self.locals_, self.locals_)
         except:
@@ -87,7 +95,7 @@ class PyREPL(object):
             value = self.stdout.getvalue()
             for line in self.stdout.getvalue().splitlines():
                 vim.current.buffer.append(line)
-        vim.command("normal Go")
+        self.insert_prompt()
 
     def count_char(self, line, char):
         """Counts the number of occurences of char from the beginning of
@@ -99,16 +107,28 @@ class PyREPL(object):
             count += 1
         return count
 
+    def clear_lines(self):
+        "Deletes all the lines below the current one."
+        vim.command("normal! jdG")
+
     def strip_line(self, line):
         "Strips the line of trailing whitespace."
         if self.count_char(line, " ") != len(line):
             return line.rstrip()
         return line
 
+    def insert_prompt(self, block=False):
+        "Inserts a prompt at the end of the buffer."
+        if not block:
+            vim.command("normal! Go>>> $")
+        else:
+            vim.command("normal! Go... $")
+
     def read_block(self, line):
         "Reads a block to a string line by line."
         try:
-            if line[-1] in (":", "\\"):
+            if line[-1] in (":", "\\")\
+            or line.startswith("@"):
                 self.in_block = True
         except IndexError:
             pass
@@ -119,12 +139,12 @@ class PyREPL(object):
                 self.in_block = False
                 return False
             self.block.append(line)
-            vim.command("normal jdG")
-            vim.command("normal! oI... ")
+            self.clear_lines()
+            self.insert_prompt(True)
             return True
         return False
 
-    def readline(self):
+    def read_line(self):
         "Parses the current line for evaluation."
         self.redirect_stdout()
         self.update_path()
@@ -136,9 +156,8 @@ class PyREPL(object):
 pyrepl = PyREPL()
 EOF
 " }}}
-
 " Public interface. {{{
-if !hasmapto("<plug>ToggleREPL")
+if !hasmapto("<SID>ToggleREPL")
     map <unique><leader>r :call <SID>ToggleREPL()<CR>
 endif
 
@@ -154,24 +173,23 @@ endfun
 
 fun! s:StartREPL()
     enew
-    set ft=python
-    map <buffer><silent>o o>>> 
-    map <buffer><silent>O O>>> 
-    map <buffer><silent><CR> :python pyrepl.readline()<CR>
-    imap <buffer><silent><CR> :python pyrepl.readline()<CR>G
-    normal ggdGi>>> 
-    " Disable autoindenting in the repl buffer
+    setl ft=python
     setl noai nocin nosi inde=
+    map  <buffer><leader>R :python pyrepl.reload_module()<CR>
+    map  <buffer><silent><CR> :python pyrepl.read_line()<CR>$
+    imap <buffer><silent><CR> :python pyrepl.read_line()<CR>$
+    normal! i>>> $
     echo("PyREPL started.")
 endfun
 
 fun! s:StopREPL()
-    map <buffer><silent>o o
-    map <buffer><silent>O O
-    map <buffer><silent><CR> <CR>
+    map  <buffer><silent><CR> <CR>
     imap <buffer><silent><CR> <CR>
     echo("PyREPL stopped.")
 endfun
+
+" Expose the Toggle function publicly.
+command! -nargs=0 PyREPLToggle call s:ToggleREPL()
 " }}}
 
 " vim:fdm=marker
