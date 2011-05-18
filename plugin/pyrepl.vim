@@ -1,6 +1,6 @@
 " =======================================================================
 " File:        pyrepl.vim
-" Version:     0.1.5
+" Version:     0.1.6
 " Description: Vim plugin that provides a Python REPL inside a buffer.
 " Maintainer:  Bogdan Popa <popa.bogdanp@gmail.com>
 " License:     Copyright (C) 2011 Bogdan Popa
@@ -31,18 +31,10 @@
 " ======================================================================
 
 " Exit if already loaded or compatible mode is set. {{{
-if exists("g:pyrepl_version") || &cp
+if exists("g:pyrepl_loaded") || &cp || !has("python")
     finish
 endif
-
-" Version number
-let g:pyrepl_version = "0.1.5"
-" }}}
-" Check for +python. {{{
-if !has("python")
-    echo("Error: PyREPL requires vim compiled with +python.")
-    finish
-endif
+let g:pyrepl_loaded = 1
 " }}}
 " Main code in Python. {{{
 python <<EOF
@@ -58,6 +50,7 @@ class PyREPL(object):
         self.block = []
         self.in_block = False
         self.string_block = False
+        self.tq_literal = None
     
     def redirect_stdout(self):
         self.old_stdout = sys.stdout
@@ -67,8 +60,8 @@ class PyREPL(object):
         sys.stdout = self.old_stdout
 
     def count_char(self, line, char):
-        """Counts the number of occurences of char from the beginning of
-        the line to the first non-char character in the line."""
+        """Counts the number of occurences of char at the beginning of
+        the line."""
         count = 0
         for i, c in enumerate(line):
             if c != char:
@@ -84,25 +77,42 @@ class PyREPL(object):
         "Copies the current line to the end of the buffer."
         vim.command("normal! yyGp")
 
-    def has_ts_literal(self, string):
+    def get_tq_literal(self, string):
+        "Returns the 'type' of the first triple-quote literal in string."
+        sq_pos = string.find("'''")
+        dq_pos = string.find('"""')
+        if sq_pos < dq_pos and sq_pos != -1:
+            return "'''"
+        elif dq_pos != -1:
+            return '"""'
+        return None
+
+    def has_tq_literal(self, string, match=False):
         "Returns True if string contains a triple-quote literal."
+        if match:
+            return self.tq_literal in string
         return '"""' in string or "'''" in string
 
     def insert_prompt(self, block=False):
         "Inserts a prompt at the end of the buffer."
         vim.current.buffer.append(
-            "... " if block else ">>> "
+            "...  " if block else ">>>  "
         )
         vim.command("normal! G$")
+        vim.command("startinsert")
 
     def reload_module(self):
         "Asks for the name of a module and tries to reload it."
-        if vim.current.line not in (">>> ", "... "):
+        if vim.current.line not in (">>>  ", "...  "):
             self.clear_lines()
             self.insert_prompt()
-        vim.command("normal! A{0} = reload({0})".format(
-            vim.eval("input('Module to reload: ')")
-        ))
+            vim.command("normal! i{0} = reload({0})".format(
+                vim.eval("input('Module to reload: ')")
+            ))
+        else:
+            vim.command("normal! a{0} = reload({0})".format(
+                vim.eval("input('Module to reload: ')")
+            ))
         self.read_line()
 
     def strip_line(self, line):
@@ -140,8 +150,9 @@ class PyREPL(object):
         self.block = []
         self.in_block = False
         self.string_block = False
+        self.tq_literal = None
 
-    def block_append(self, line, prompt=True):
+    def block_append(self, line="", prompt=True):
         "Appends a line to the current block."
         self.block.append(line)
         self.clear_lines()
@@ -149,27 +160,30 @@ class PyREPL(object):
             self.insert_prompt(True)
 
     def read_block(self, line):
-        "Reads a block to a string line by line."
+        "Reads a block of code to a string line by line."
         try:
             if line[-1] in (":", "\\")\
             or line.startswith("@"):
                 self.in_block = True
-            if not self.string_block\
-            and self.has_ts_literal(line):
+            if not self.in_block\
+            and not self.string_block\
+            and self.has_tq_literal(line):
+                self.tq_literal = self.get_tq_literal(line)
                 self.string_block = True
                 self.in_block = True
                 self.block_append(line)
                 return True
         except IndexError:
             pass
-        if self.in_block:
-            if self.string_block and not line:
-                self.block_append("")
-                return True
-            if self.has_ts_literal(line):
+        if self.string_block:
+            if self.has_tq_literal(line, True):
                 self.block_append(line, False)
                 self.eval_block()
-            elif line:
+            else:
+                self.block_append()
+            return True
+        if self.in_block:
+            if line and line != " ":
                 self.block_append(line)
             else:
                 self.eval_block()
@@ -210,9 +224,10 @@ fun! s:StartREPL()
     map  <buffer><leader>R :python pyrepl.reload_module()<CR>
     map  <buffer><silent><S-CR> :python pyrepl.duplicate_line()<CR>$
     imap <buffer><silent><S-CR> :python pyrepl.duplicate_line()<CR>$
-    map  <buffer><silent><CR> :python pyrepl.read_line()<CR>$
-    imap <buffer><silent><CR> :python pyrepl.read_line()<CR>$
-    normal! i>>> $
+    map  <buffer><silent><CR> :python pyrepl.read_line()<CR>
+    imap <buffer><silent><CR> :python pyrepl.read_line()<CR>
+    normal! i>>>  $
+    startinsert
     echo("PyREPL started.")
 endfun
 
