@@ -1,6 +1,6 @@
 " =======================================================================
 " File:        pyrepl.vim
-" Version:     0.1.7
+" Version:     0.2.1
 " Description: Vim plugin that provides a Python REPL inside a buffer.
 " Maintainer:  Bogdan Popa <popa.bogdanp@gmail.com>
 " License:     Copyright (C) 2011 Bogdan Popa
@@ -40,6 +40,7 @@ let g:pyrepl_loaded = 1
 python <<EOF
 import cStringIO
 import os
+import re
 import sys
 import traceback
 import vim
@@ -100,7 +101,9 @@ class PyREPL(object):
         except IndexError:
             return ""
         indent_level = self.count_char(previous_line, " ")
-        if previous_line[-1] == ":":
+        if previous_line == " " * indent_level:
+            return " " * (indent_level - 1)
+        elif previous_line[-1] == ":":
             return "{0}    ".format(" " * indent_level)
         else:
             return " " * indent_level
@@ -130,11 +133,17 @@ class PyREPL(object):
             ))
         self.read_line()
 
+    def is_whitespace(self, string):
+        "Returns true if the string is comprised by spaces."
+        return self.count_char(string, " ") == len(string)
+
     def strip_line(self, line):
-        "Strips the line of trailing whitespace."
-        if self.count_char(line, " ") != len(line):
-            return line.rstrip()
-        return line
+        """Strips the line of its prompt and any trailing whitespace
+        there might be."""
+        line = re.sub(r"^(>>>|\.\.\.)\s?", "", line)
+        if self.is_whitespace(line) and self.in_block:
+            return line
+        return line.rstrip()
 
     def update_path(self):
         if os.getcwd() not in sys.path:
@@ -166,6 +175,16 @@ class PyREPL(object):
         self.in_block = False
         self.string_block = False
         self.tq_literal = None
+
+    def eval_file(self, filename):
+        "Evaluates the file at the given path."
+        try:
+            with open(filename) as file_:
+                self.redirect_stdout()
+                self.eval(file_.read(), "exec")
+                self.restore_stdout()
+        except IOError, e:
+            pass
 
     def block_append(self, line="", prompt=True):
         "Appends a line to the current block."
@@ -209,7 +228,7 @@ class PyREPL(object):
         "Parses the current line for evaluation."
         self.redirect_stdout()
         self.update_path()
-        line = self.strip_line(vim.current.line[4:])
+        line = self.strip_line(vim.current.line)
         if not self.read_block(line) and line:
             self.eval(line)
         self.restore_stdout()
@@ -234,6 +253,7 @@ endfun
 
 fun! s:StartREPL()
     enew
+    setl buftype=nofile
     setl ft=python
     setl noai nocin nosi inde=
     map  <buffer><leader>R :python pyrepl.reload_module()<CR>
@@ -246,6 +266,12 @@ fun! s:StartREPL()
     echo("PyREPL started.")
 endfun
 
+fun! s:StartREPLWithFile()
+    let s:filename = expand('%')
+    call s:StartREPL()
+    python pyrepl.eval_file(vim.eval("s:filename"))
+endfun
+
 fun! s:StopREPL()
     map  <buffer><silent><S-CR> <S-CR>
     imap <buffer><silent><S-CR> <S-CR>
@@ -256,6 +282,7 @@ endfun
 
 " Expose the Toggle function publicly.
 command! -nargs=0 PyREPLToggle call s:ToggleREPL()
+command! -nargs=0 PyREPLEvalFile call s:StartREPLWithFile()
 " }}}
 
 " vim:fdm=marker
